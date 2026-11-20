@@ -39,6 +39,7 @@ import com.google.android.exoplayer2.ControlDispatcher;
 import com.google.android.exoplayer2.DefaultControlDispatcher;
 import com.google.android.exoplayer2.DefaultRenderersFactory;
 import com.google.android.exoplayer2.Player;
+import com.google.android.exoplayer2.ui.SubtitleView;
 import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.ext.leanback.LeanbackPlayerAdapter;
 import com.google.android.exoplayer2.ext.mediasession.MediaSessionConnector;
@@ -58,6 +59,7 @@ import com.liskovsoft.smartyoutubetv2.common.app.views.PlaybackView;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.controller.ExoPlayerController;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.other.DebugInfoManager;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.other.ExoPlayerInitializer;
+import com.liskovsoft.smartyoutubetv2.common.exoplayer.other.DualSubtitleManager;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.other.SubtitleManager;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.selector.FormatItem;
 import com.liskovsoft.smartyoutubetv2.common.exoplayer.versions.renderer.CustomOverridesRenderersFactory;
@@ -225,6 +227,7 @@ public class PlaybackFragment extends SeekModePlaybackFragment implements Playba
     @Override
     public void onResume() {
         super.onResume();
+        createSubtitleManager(); // Fork: re-attach dual overlay after view teardown
 
         if ((Util.SDK_INT <= 23 || mPlayer == null)) {
             initializePlayer();
@@ -395,6 +398,8 @@ public class PlaybackFragment extends SeekModePlaybackFragment implements Playba
 
         mPlaybackPresenter.setView(this); // replaced by the embed player?
         mPlaybackPresenter.onEngineInitialized();
+
+        createSubtitleManager(); // Fork: subtitle views must exist even before first CC interaction
     }
 
     private void destroyPlayerObjects() {
@@ -519,6 +524,13 @@ public class PlaybackFragment extends SeekModePlaybackFragment implements Playba
                 mPlayer.getTextComponent().addTextOutput(mSubtitleManager);
             }
         }
+
+        // Fork: dual subtitles overlay
+        SubtitleView nativeSubs = getView().findViewById(R.id.leanback_subtitles);
+        DualSubtitleManager dualManager = DualSubtitleManager.instance(getContext());
+        dualManager.attach(nativeSubs);
+        dualManager.setPositionProvider(() -> mPlayer != null && mPlayer.getPlaybackState() != Player.STATE_IDLE
+                ? mPlayer.getCurrentPosition() : -1);
     }
 
     private void createDebugManager() {

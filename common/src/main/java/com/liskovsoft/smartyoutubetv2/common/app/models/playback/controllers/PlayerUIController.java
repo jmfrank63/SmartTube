@@ -9,6 +9,10 @@ import com.liskovsoft.mediaserviceinterfaces.MediaItemService;
 import com.liskovsoft.mediaserviceinterfaces.ServiceManager;
 import com.liskovsoft.mediaserviceinterfaces.data.MediaGroup;
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItem;
+import com.liskovsoft.mediaserviceinterfaces.data.MediaSubtitle;
+import com.liskovsoft.smartyoutubetv2.common.exoplayer.other.DualSubtitleManager;
+import com.liskovsoft.smartyoutubetv2.common.exoplayer.other.SubtitleManager;
+import com.liskovsoft.smartyoutubetv2.common.exoplayer.other.SubtitleManager.SubtitleStyle;
 import com.liskovsoft.mediaserviceinterfaces.data.MediaItemMetadata;
 import com.liskovsoft.mediaserviceinterfaces.data.NotificationState;
 import com.liskovsoft.mediaserviceinterfaces.data.PlaylistInfo;
@@ -232,6 +236,132 @@ public class PlayerUIController extends BasePlayerController {
                             getContext().getString(R.string.subtitles_disabled)));
             settingsPresenter.showDialog();
         }));
+
+        // Fork: dual subtitles — select a SECOND subtitle track rendered above the native one
+        List<MediaSubtitle> dualTracks = DualSubtitleManager.instance(getContext()).getTracks();
+        if (dualTracks != null && !dualTracks.isEmpty()) {
+            String dualCategoryTitle = subtitlesOrigCategoryTitle + " 2";
+            settingsPresenter.appendSingleButton(UiOptionItem.from(dualCategoryTitle, optionItem -> {
+                MediaSubtitle dualSelected = DualSubtitleManager.instance(getContext()).getSelected();
+                List<OptionItem> dualOptions = new ArrayList<>();
+                dualOptions.add(UiOptionItem.from(getContext().getString(R.string.subtitles_disabled),
+                        option -> DualSubtitleManager.instance(getContext()).select(null),
+                        dualSelected == null));
+                for (MediaSubtitle track : dualTracks) {
+                    boolean isChecked = dualSelected != null
+                            && track.getLanguageCode() != null
+                            && track.getLanguageCode().equals(dualSelected.getLanguageCode())
+                            && Helpers.equals(track.getType(), dualSelected.getType());
+                    String trackName = track.getName() != null ? track.getName() : track.getLanguageCode();
+                    dualOptions.add(UiOptionItem.from(trackName,
+                            option -> DualSubtitleManager.instance(getContext()).select(track),
+                            isChecked));
+                }
+                settingsPresenter.appendRadioCategory(dualCategoryTitle, dualOptions);
+                settingsPresenter.showDialog();
+            }));
+
+            // Fork: dual subtitles sync offset — cycles 0 / +0.5s / +1s / +2s / -0.5s / -1s / -2s
+            DualSubtitleManager dualManager = DualSubtitleManager.instance(getContext());
+            long[] offsetPresets = {0, 500, 1000, 2000, -500, -1000, -2000};
+            long currentOffset = dualManager.getOffset();
+            String offsetTitle = "Subtitles 2 offset: " + (currentOffset >= 0 ? "+" : "") + currentOffset + " ms";
+            settingsPresenter.appendSingleButton(UiOptionItem.from(offsetTitle, optionItem -> {
+                int idx = 0;
+                for (int i = 0; i < offsetPresets.length; i++) {
+                    if (offsetPresets[i] == currentOffset) {
+                        idx = i;
+                        break;
+                    }
+                }
+                long nextOffset = offsetPresets[(idx + 1) % offsetPresets.length];
+                dualManager.setOffset(nextOffset);
+                MessageHelpers.showMessage(getContext(),
+                        "Subtitles 2 offset: " + (nextOffset >= 0 ? "+" : "") + nextOffset + " ms");
+                onSubtitleLongClicked(); // rebuild dialog with the updated title
+            }));
+
+            // Fork: native (line 1) subtitle delay — holds cues back for dub/voiceover timing
+            android.content.SharedPreferences dualPrefs =
+                    getContext().getSharedPreferences("dual_subtitle", android.content.Context.MODE_PRIVATE);
+            long[] nativePresets = {0, 250, 500, 1000, 2000, 3000};
+            long nativeCurrent = dualPrefs.getLong("native_offset", 0);
+            String nativeTitle = "Subtitles offset (line 1): " + (nativeCurrent >= 0 ? "+" : "") + nativeCurrent + " ms";
+            settingsPresenter.appendSingleButton(UiOptionItem.from(nativeTitle, optionItem -> {
+                int idx = 0;
+                for (int i = 0; i < nativePresets.length; i++) {
+                    if (nativePresets[i] == nativeCurrent) {
+                        idx = i;
+                        break;
+                    }
+                }
+                long nextNative = nativePresets[(idx + 1) % nativePresets.length];
+                dualPrefs.edit().putLong("native_offset", nextNative).apply();
+                MessageHelpers.showMessage(getContext(),
+                        "Subtitles offset (line 1): +" + nextNative + " ms");
+                onSubtitleLongClicked();
+            }));
+
+            // Fork: dual subtitles position — follow native or fixed fractions
+            float dualPos = dualManager.getDualPosition();
+            String posTitle = "Subtitles 2 position: " + (dualPos < 0 ? "follow native" : (int) (dualPos * 100) + "%");
+            float[] posPresets = {-1f, 0.15f, 0.20f, 0.25f, 0.32f, 0.42f, 0.52f};
+            settingsPresenter.appendSingleButton(UiOptionItem.from(posTitle, optionItem -> {
+                int idx = 0;
+                for (int i = 0; i < posPresets.length; i++) {
+                    if (posPresets[i] == dualPos) {
+                        idx = i;
+                        break;
+                    }
+                }
+                float nextPos = posPresets[(idx + 1) % posPresets.length];
+                dualManager.setDualPosition(nextPos);
+                MessageHelpers.showMessage(getContext(), "Subtitles 2 position: "
+                        + (nextPos < 0 ? "follow native" : (int) (nextPos * 100) + "%"));
+                onSubtitleLongClicked();
+            }));
+
+            // Fork: dual subtitles scale — follow main or multipliers of the base size
+            float dualScale = dualManager.getDualScale();
+            String scaleTitle = "Subtitles 2 scale: " + (dualScale < 0 ? "follow main" : (int) (dualScale * 100) + "%");
+            float[] scalePresets = {-1f, 0.7f, 0.85f, 1.0f, 1.15f, 1.3f};
+            settingsPresenter.appendSingleButton(UiOptionItem.from(scaleTitle, optionItem -> {
+                int idx = 0;
+                for (int i = 0; i < scalePresets.length; i++) {
+                    if (scalePresets[i] == dualScale) {
+                        idx = i;
+                        break;
+                    }
+                }
+                float nextScale = scalePresets[(idx + 1) % scalePresets.length];
+                dualManager.setDualScale(nextScale);
+                MessageHelpers.showMessage(getContext(), "Subtitles 2 scale: "
+                        + (nextScale < 0 ? "follow main" : (int) (nextScale * 100) + "%"));
+                onSubtitleLongClicked();
+            }));
+
+            // Fork: dual subtitles style — same as main or one of the native presets
+            String styleTitle = "Subtitles 2 style: " + (dualManager.getDualStyleIndex() < 0 ? "same as main" : "custom");
+            settingsPresenter.appendSingleButton(UiOptionItem.from(styleTitle, optionItem -> {
+                List<OptionItem> styleOptions = new ArrayList<>();
+                styleOptions.add(UiOptionItem.from("Same as main",
+                        option -> dualManager.setDualStyleIndex(DualSubtitleManager.STYLE_FOLLOW),
+                        dualManager.getDualStyleIndex() < 0));
+                List<SubtitleManager.SubtitleStyle> styles =
+                        PlayerData.instance(getContext()).getSubtitleStyles();
+                if (styles != null) {
+                    for (int i = 0; i < styles.size(); i++) {
+                        SubtitleManager.SubtitleStyle styleEntry = styles.get(i);
+                        final int styleIdx = i;
+                        styleOptions.add(UiOptionItem.from(getContext().getString(styleEntry.nameResId),
+                                option -> dualManager.setDualStyleIndex(styleIdx),
+                                dualManager.getDualStyleIndex() == styleIdx));
+                    }
+                }
+                settingsPresenter.appendRadioCategory("Subtitles 2 style", styleOptions);
+                settingsPresenter.showDialog();
+            }));
+        }
 
         settingsPresenter.appendSingleSwitch(AppDialogUtil.createSubtitleChannelOption(getContext()));
 

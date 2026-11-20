@@ -13,6 +13,7 @@ import com.liskovsoft.sharedutils.mylogger.Log;
 import com.liskovsoft.sharedutils.rx.RxHelper;
 import com.liskovsoft.smartyoutubetv2.common.R;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Playlist;
+import com.liskovsoft.smartyoutubetv2.common.exoplayer.other.DualSubtitleManager;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.SimpleMediaItem;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.Video;
 import com.liskovsoft.smartyoutubetv2.common.app.models.data.VideoGroup;
@@ -268,6 +269,11 @@ public class VideoLoaderController extends BasePlayerController {
 
     private void processFormatInfo(MediaItemFormatInfo formatInfo) {
         PlaybackView player = getPlayer();
+
+        // Fork: dual subtitles — make this video's caption tracks available to the second-subtitle overlay
+        if (formatInfo.getSubtitles() != null && !formatInfo.getSubtitles().isEmpty()) {
+            DualSubtitleManager.instance(getContext()).setTracks(formatInfo.getSubtitles());
+        }
 
         if (player == null || getVideo() == null) {
             return;

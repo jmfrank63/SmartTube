@@ -31,8 +31,9 @@ if (keystorePropertiesFile.exists()) {
 }
 
 // The first letter of the flavor name must be in uppercase
+// Fork: pass -Pfork to build without Firebase (allows the .fork applicationId suffix)
 if (new File("${projectDir}/google-services.json").exists() && (getGradle().getStartParameter().getTaskRequests().toString().contains("Stbeta") ||
-        getGradle().getStartParameter().getTaskRequests().toString().contains("Ststable"))) {
+        getGradle().getStartParameter().getTaskRequests().toString().contains("Ststable")) && !project.hasProperty('fork')) {
     // Google Services Gradle plugin (transforms google-services.json file)
     apply plugin: 'com.google.gms.google-services'
 
@@ -113,6 +114,8 @@ android {
         }
         // Use same key for release and debug for testing
         debug {
+            // Fork builds coexist with the official app (org.smarttube.beta.fork)
+            applicationIdSuffix ".fork"
             if (keystorePropertiesFile.exists()) {
                 signingConfig signingConfigs.release
             }

@@ -17,6 +17,7 @@ import com.google.android.exoplayer2.text.TextOutput;
 import com.google.android.exoplayer2.ui.SubtitleView;
 import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.smartyoutubetv2.common.R;
+import com.liskovsoft.smartyoutubetv2.common.exoplayer.other.DualSubtitleManager;
 import com.liskovsoft.smartyoutubetv2.common.prefs.AppPrefs;
 import com.liskovsoft.smartyoutubetv2.common.prefs.common.DataChangeBase.OnDataChange;
 import com.liskovsoft.smartyoutubetv2.common.prefs.PlayerData;
@@ -31,6 +32,11 @@ public class SubtitleManager implements TextOutput, OnDataChange {
     private final List<SubtitleStyle> mSubtitleStyles = new ArrayList<>();
     private final AppPrefs mPrefs;
     private final PlayerData mPlayerData;
+    private final android.content.SharedPreferences mDualPrefs;
+    private final android.os.Handler mCueHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private List<Cue> mPendingCues;
+    private long mShowAtElapsed;
+    private boolean mReleasePending;
     private CharSequence subsBuffer;
 
     public static class SubtitleStyle {
@@ -60,6 +66,7 @@ public class SubtitleManager implements TextOutput, OnDataChange {
         mSubtitleView = subtitleView;
         mPrefs = AppPrefs.instance(mContext);
         mPlayerData = PlayerData.instance(mContext);
+        mDualPrefs = mContext.getSharedPreferences("dual_subtitle", Context.MODE_PRIVATE);
         mPlayerData.setOnChange(this);
         configureSubtitleView();
     }
@@ -71,9 +78,70 @@ public class SubtitleManager implements TextOutput, OnDataChange {
 
     @Override
     public void onCues(List<Cue> cues) {
-        if (mSubtitleView != null) {
-            mSubtitleView.setCues(forceCenterAlignment(cues));
+        if (mSubtitleView == null) {
+            return;
         }
+        List<Cue> aligned = forceCenterAlignment(cues);
+
+        // Fork: while a second subtitle track is selected, the native line is composed
+        // together with it into one synchronized block
+        DualSubtitleManager dual = DualSubtitleManager.instance(mContext);
+        boolean composing = dual.isComposing();
+
+        // Fork: optional delay for the native line (voiceover/dub timing)
+        long offsetMs = mDualPrefs.getLong("native_offset", 0);
+        if (offsetMs <= 0) {
+            mCueHandler.removeCallbacks(mReleaseRunnable);
+            mReleasePending = false;
+            mPendingCues = null;
+            if (composing) {
+                mSubtitleView.setVisibility(View.GONE);
+                dual.onNativeCues(aligned);
+            } else {
+                mSubtitleView.setVisibility(View.VISIBLE);
+                mSubtitleView.setCues(aligned);
+            }
+            return;
+        }
+        mPendingCues = aligned;
+        mShowAtElapsed = android.os.SystemClock.elapsedRealtime() + offsetMs;
+        if (!mReleasePending) {
+            mReleasePending = true;
+            mCueHandler.post(mReleaseRunnable);
+        }
+    }
+
+    private final Runnable mReleaseRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!mReleasePending) {
+                return;
+            }
+            long now = android.os.SystemClock.elapsedRealtime();
+            if (now < mShowAtElapsed) {
+                mCueHandler.postDelayed(this, Math.min(200, mShowAtElapsed - now));
+                return;
+            }
+            mReleasePending = false;
+            if (mPendingCues == null) {
+                return;
+            }
+            DualSubtitleManager dual = DualSubtitleManager.instance(mContext);
+            if (dual.isComposing()) {
+                if (mSubtitleView != null) {
+                    mSubtitleView.setVisibility(View.GONE);
+                }
+                dual.onNativeCues(mPendingCues);
+            } else if (mSubtitleView != null) {
+                mSubtitleView.setCues(mPendingCues);
+            }
+            mPendingCues = null;
+        }
+    };
+
+    /** Fork: current delay of the native subtitle line, ms (>= 0). */
+    public long getNativeOffset() {
+        return mDualPrefs.getLong("native_offset", 0);
     }
 
     public void show(boolean show) {
@@ -144,6 +212,7 @@ public class SubtitleManager implements TextOutput, OnDataChange {
             }
 
             mSubtitleView.setBottomPaddingFraction(mPlayerData.getSubtitlePosition());
+            DualSubtitleManager.instance(mContext).setNativePosition(mPlayerData.getSubtitlePosition()); // Fork: keep dual line above native
         }
     }
 
@@ -161,6 +230,7 @@ public class SubtitleManager implements TextOutput, OnDataChange {
 
         float textSize = getTextSizePx();
         mSubtitleView.setFixedTextSize(TypedValue.COMPLEX_UNIT_PX, textSize);
+        DualSubtitleManager.instance(mContext).mirrorNativeStyle(style, textSize); // Fork: mirror to dual line
     }
 
     @RequiresApi(19)
@@ -180,6 +250,7 @@ public class SubtitleManager implements TextOutput, OnDataChange {
 
             float textSizePx = getTextSizePx();
             mSubtitleView.setFixedTextSize(TypedValue.COMPLEX_UNIT_PX, textSizePx * captioningManager.getFontScale());
+            DualSubtitleManager.instance(mContext).mirrorNativeStyle(style, textSizePx * captioningManager.getFontScale()); // Fork: mirror to dual line
         }
     }
 
